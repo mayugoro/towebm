@@ -49,7 +49,7 @@ bot.onText(/\/start/, (msg) => {
     const welcomeMessage = `
 🎨 *Selamat Datang di Video to WEBM Bot!*
 
-Bot ini mengkonversi video/animasi ke WEBM untuk sticker Telegram dengan spesifikasi:
+Bot ini mengkonversi video/animasi/sticker ke WEBM untuk video sticker Telegram dengan spesifikasi:
 ✅ Resolusi 512x512 px
 ✅ Durasi max 3 detik
 ✅ Format WEBM VP9
@@ -57,17 +57,19 @@ Bot ini mengkonversi video/animasi ke WEBM untuk sticker Telegram dengan spesifi
 
 *Format yang Didukung:*
 🎬 GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+👍 Sticker (WEBP static, WEBM video)
 
 *Cara Penggunaan:*
-1. Kirim video/GIF/animasi ke bot
+1. Kirim video/GIF/sticker ke bot
 2. Tunggu proses konversi
 3. Download file WEBM hasil konversi
+4. Forward ke @Stickers untuk buat pack!
 
 *Commands:*
 /start - Tampilkan pesan ini
 /help - Bantuan penggunaan
 
-Kirim video sekarang untuk memulai! 🎬
+Kirim video/sticker sekarang untuk memulai! 🎬
     `;
     
     bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
@@ -80,23 +82,26 @@ bot.onText(/\/help/, (msg) => {
 📖 *Bantuan - Video to WEBM Bot*
 
 *Cara Menggunakan:*
-1. Kirim video/GIF/animasi ke bot (sebagai file atau animation)
-2. Bot akan otomatis mengkonversi ke WEBM
+1. Kirim video/GIF/sticker ke bot
+2. Bot akan otomatis mengkonversi ke WEBM video sticker
 3. File WEBM akan dikirim kembali ke Anda
+4. Forward ke @Stickers untuk membuat sticker pack
 
 *Format yang Didukung:*
-• GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+• Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+• Sticker: WEBP (static), WEBM (video)
 • Ukuran maksimal: 50 MB
 • Akan dikonversi ke 512x512 px
 • Durasi dibatasi 3 detik
 
 *Tips:*
-• Video dengan background transparan (GIF/WEBP) memberikan hasil terbaik
+• Video/sticker dengan background transparan memberikan hasil terbaik
 • Video dengan durasi > 3 detik akan dipotong otomatis
-• File hasil bisa langsung digunakan untuk sticker Telegram
-• Semua format video akan dikonversi ke WEBM VP9
+• Sticker static (WEBP) akan dikonversi ke format video sticker
+• File hasil bisa langsung digunakan untuk video sticker Telegram
+• Max 3 konversi per menit untuk mencegah spam
 
-Ada masalah? Hubungi admin!
+Ada masalah? Cek dokumentasi di GitHub!
     `;
     
     bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
@@ -143,6 +148,28 @@ bot.on('video', async (msg) => {
     }
     
     await processVideo(chatId, video.file_id, video.file_name || 'video.mp4');
+});
+
+// Handler untuk menerima sticker (WEBP/TGS/WEBM)
+bot.on('sticker', async (msg) => {
+    const chatId = msg.chat.id;
+    const sticker = msg.sticker;
+    
+    // Telegram stickers bisa berupa: WEBP (static), TGS (animated Lottie), atau WEBM (video)
+    let fileType = 'static';
+    let fileName = 'sticker.webp';
+    
+    if (sticker.is_animated) {
+        fileType = 'animated';
+        fileName = 'sticker.tgs';
+        return bot.sendMessage(chatId, '❌ Sticker animated TGS (Lottie) belum didukung. Kirim sticker video (WEBM) atau static (WEBP) saja!');
+    } else if (sticker.is_video) {
+        fileType = 'video';
+        fileName = 'sticker.webm';
+    }
+    
+    await bot.sendMessage(chatId, `📥 Menerima ${fileType} sticker, converting to video sticker format...`);
+    await processVideo(chatId, sticker.file_id, fileName);
 });
 
 /**

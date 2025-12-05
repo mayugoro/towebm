@@ -5,13 +5,15 @@ Bot Telegram untuk mengkonversi video/animasi ke WEBM sesuai dengan standar stic
 ## ✨ Fitur
 
 - ✅ Konversi berbagai format video ke WEBM format VP9
-- ✅ Support: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+- ✅ Support video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+- ✅ Support sticker: WEBP (static), WEBM (video sticker)
 - ✅ Otomatis resize ke 512x512 px
 - ✅ Batasi durasi maksimal 3 detik
 - ✅ Kompres file hingga max 256 KB
 - ✅ Support transparency (alpha channel)
 - ✅ Auto-loop untuk sticker
 - ✅ Download langsung dari Telegram
+- ✅ Rate limiting (3 konversi per menit)
 - ✅ Cleanup otomatis file temporary
 
 ## 📋 Persyaratan
@@ -50,11 +52,15 @@ npm start
 ## 🎯 Cara Penggunaan
 
 1. Start bot dengan command `/start`
-2. Kirim file video/GIF ke bot (sebagai document, animation, atau video)
-3. Format yang didukung: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+2. Kirim file video/GIF/sticker ke bot
+   - Video: sebagai document, animation, atau video
+   - Sticker: kirim langsung sticker yang ingin dikonversi
+3. Format yang didukung: 
+   - Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+   - Sticker: WEBP (static), WEBM (video)
 4. Tunggu proses konversi selesai
 5. Download file WEBM hasil konversi
-6. Gunakan untuk membuat sticker Telegram!
+6. Forward ke @Stickers untuk membuat sticker pack!
 
 ## 📝 Commands
 
