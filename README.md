@@ -32,7 +32,6 @@ npm install
 3. Buat file `.env` dan isi dengan:
 ```env
 BOT_TOKEN=your_bot_token_here
-ADMIN_ID=your_telegram_user_id
 ```
 
 4. Jalankan bot:
@@ -61,7 +60,6 @@ npm start
 
 - `/start` - Menampilkan welcome message
 - `/help` - Bantuan penggunaan bot
-- `/stats` - Statistik bot (admin only)
 
 ## ⚙️ Spesifikasi Output
 

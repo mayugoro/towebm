@@ -7,7 +7,6 @@ const { videoToWebm, validateVideo, isSupportedFormat } = require('./handler/gif
 
 // Bot token dari .env
 const token = process.env.BOT_TOKEN;
-const adminId = process.env.ADMIN_ID;
 
 // Create bot instance
 const bot = new TelegramBot(token, { polling: true });
@@ -43,7 +42,6 @@ Bot ini mengkonversi video/animasi ke WEBM untuk sticker Telegram dengan spesifi
 *Commands:*
 /start - Tampilkan pesan ini
 /help - Bantuan penggunaan
-/stats - Statistik bot (admin only)
 
 Kirim video sekarang untuk memulai! 🎬
     `;
@@ -80,27 +78,7 @@ Ada masalah? Hubungi admin!
     bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
 });
 
-// Command /stats (admin only)
-bot.onText(/\/stats/, (msg) => {
-    const chatId = msg.chat.id;
-    
-    if (chatId.toString() !== adminId) {
-        return bot.sendMessage(chatId, '❌ Command ini hanya untuk admin!');
-    }
-    
-    // Count files in temp
-    const tempFiles = fs.readdirSync(tempDir);
-    const statsMessage = `
-📊 *Statistik Bot*
 
-Temp files: ${tempFiles.length}
-Temp directory: ${tempDir}
-
-Status: ✅ Online
-    `;
-    
-    bot.sendMessage(chatId, statsMessage, { parse_mode: 'Markdown' });
-});
 
 // Handler untuk menerima dokumen (semua format video)
 bot.on('document', async (msg) => {
