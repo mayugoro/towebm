@@ -8,8 +8,31 @@ const { videoToWebm, validateVideo, isSupportedFormat } = require('./handler/gif
 // Bot token dari .env
 const token = process.env.BOT_TOKEN;
 
-// Create bot instance
-const bot = new TelegramBot(token, { polling: true });
+// Validasi token
+if (!token) {
+    console.error('ERROR: BOT_TOKEN tidak ditemukan di file .env!');
+    console.error('Silakan buat file .env dan isi dengan: BOT_TOKEN=your_bot_token_here');
+    process.exit(1);
+}
+
+// Create bot instance dengan polling configuration
+const bot = new TelegramBot(token, { 
+    polling: {
+        interval: 1000,  // Polling interval 1 detik
+        autoStart: true,
+        params: {
+            timeout: 10
+        }
+    }
+});
+
+// Rate limiting - track user requests
+const userRequests = new Map();
+const MAX_REQUESTS_PER_MINUTE = 3; // Max 3 konversi per menit per user
+const COOLDOWN_TIME = 60000; // 1 menit dalam milliseconds
+
+// Processing queue - track ongoing processes
+const processingUsers = new Set();
 
 // Buat folder temp kalau belum ada
 const tempDir = path.join(__dirname, 'temp');
@@ -18,6 +41,7 @@ if (!fs.existsSync(tempDir)) {
 }
 
 console.log('Bot started successfully! 🚀');
+console.log('Polling for messages...');
 
 // Command /start
 bot.onText(/\/start/, (msg) => {
@@ -122,6 +146,29 @@ bot.on('video', async (msg) => {
 });
 
 /**
+ * Check rate limit untuk user
+ */
+function checkRateLimit(userId) {
+    const now = Date.now();
+    const userHistory = userRequests.get(userId) || [];
+    
+    // Hapus request yang sudah lebih dari 1 menit
+    const recentRequests = userHistory.filter(time => now - time < COOLDOWN_TIME);
+    
+    if (recentRequests.length >= MAX_REQUESTS_PER_MINUTE) {
+        const oldestRequest = recentRequests[0];
+        const waitTime = Math.ceil((COOLDOWN_TIME - (now - oldestRequest)) / 1000);
+        return { allowed: false, waitTime };
+    }
+    
+    // Update request history
+    recentRequests.push(now);
+    userRequests.set(userId, recentRequests);
+    
+    return { allowed: true };
+}
+
+/**
  * Process Video/Animation conversion
  */
 async function processVideo(chatId, fileId, fileName) {
@@ -130,6 +177,20 @@ async function processVideo(chatId, fileId, fileName) {
     let outputPath;
     
     try {
+        // Check if user is already processing
+        if (processingUsers.has(chatId)) {
+            return bot.sendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
+        }
+        
+        // Check rate limit
+        const rateLimit = checkRateLimit(chatId);
+        if (!rateLimit.allowed) {
+            return bot.sendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
+        }
+        
+        // Mark user as processing
+        processingUsers.add(chatId);
+        
         // Send processing message
         processingMsg = await bot.sendMessage(chatId, '⏳ Memproses video Anda...');
         
@@ -207,14 +268,22 @@ async function processVideo(chatId, fileId, fileName) {
         const errorMsg = '❌ Terjadi kesalahan saat memproses video!\n\n' + error.message;
         
         if (processingMsg) {
-            await bot.editMessageText(errorMsg, {
-                chat_id: chatId,
-                message_id: processingMsg.message_id
-            });
+            try {
+                await bot.editMessageText(errorMsg, {
+                    chat_id: chatId,
+                    message_id: processingMsg.message_id
+                });
+            } catch (e) {
+                // Jika edit gagal, kirim pesan baru
+                await bot.sendMessage(chatId, errorMsg);
+            }
         } else {
             await bot.sendMessage(chatId, errorMsg);
         }
     } finally {
+        // Remove user from processing set
+        processingUsers.delete(chatId);
+        
         // Cleanup temp files
         try {
             if (inputPath && fs.existsSync(inputPath)) {
@@ -229,15 +298,41 @@ async function processVideo(chatId, fileId, fileName) {
     }
 }
 
-// Error handling
+// Error handling untuk polling
 bot.on('polling_error', (error) => {
-    console.error('Polling error:', error);
+    console.error('Polling error:', error.code);
+    
+    // Handle specific errors
+    if (error.code === 'ETELEGRAM') {
+        console.error('Telegram API Error:', error.response?.body);
+    } else if (error.code === 'EFATAL') {
+        console.error('Fatal error - bot mungkin diblokir atau token invalid!');
+        console.error('Silakan cek token bot Anda di @BotFather');
+    }
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (error) => {
+    console.error('Unhandled promise rejection:', error);
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('\nShutting down bot...');
+    console.log('Stopping polling...');
     bot.stopPolling();
+    
+    // Clear all temp files
+    try {
+        const files = fs.readdirSync(tempDir);
+        files.forEach(file => {
+            fs.unlinkSync(path.join(tempDir, file));
+        });
+        console.log('Temp files cleaned up');
+    } catch (err) {
+        console.error('Error cleaning temp files:', err);
+    }
+    
     process.exit(0);
 });
 
