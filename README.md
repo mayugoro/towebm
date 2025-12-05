@@ -136,7 +136,7 @@ ISC
 
 ## 👤 Author
 
-Dibuat dengan ❤️ untuk komunitas Telegram Indonesia
+Dibuat oleh [orang ini](https://t.me/Mayugoro) untuk mempermudah membuat sticker telegram
 
 ---
 
