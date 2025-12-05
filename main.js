@@ -160,15 +160,22 @@ bot.on('sticker', async (msg) => {
     let fileName = 'sticker.webp';
     
     if (sticker.is_animated) {
-        fileType = 'animated';
-        fileName = 'sticker.tgs';
-        return bot.sendMessage(chatId, '❌ Sticker animated TGS (Lottie) belum didukung. Kirim sticker video (WEBM) atau static (WEBP) saja!');
+        // TGS (Lottie) animated stickers
+        return bot.sendMessage(chatId, 
+            '❌ Sticker TGS (Lottie animated) tidak bisa langsung dikonversi.\n\n' +
+            '💡 *Solusi:*\n' +
+            '1. Convert TGS ke video dulu menggunakan:\n' +
+            '   • @tgstovideo_bot\n' +
+            '   • https://ezgif.com/tgs-to-video\n' +
+            '2. Kirim hasil video ke bot ini\n\n' +
+            'Atau kirim sticker WEBP (static) atau WEBM (video) langsung!',
+            { parse_mode: 'Markdown' }
+        );
     } else if (sticker.is_video) {
         fileType = 'video';
         fileName = 'sticker.webm';
     }
     
-    await bot.sendMessage(chatId, `📥 Menerima ${fileType} sticker, converting to video sticker format...`);
     await processVideo(chatId, sticker.file_id, fileName);
 });
 
