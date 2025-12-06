@@ -3,7 +3,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { videoToWebm, imageToWebp, validateVideo, isSupportedFormat, isStaticImage } = require('./handler/gif_to_webm');
+const { videoToWebm, validateVideo, isSupportedFormat } = require('./handler/gif_to_webm');
+const { imageToPng, isStaticImage } = require('./handler/to_webp');
 
 // Bot token dari .env
 const token = process.env.BOT_TOKEN;
@@ -56,8 +57,8 @@ Bot ini mengkonversi video/animasi ke WEBM dan gambar ke WEBP untuk sticker Tele
 ✅ Ukuran max 256 KB
 
 *Format yang Didukung:*
-🎬 Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG
-🖼️ Gambar: PNG, JPG, JPEG, WEBP
+🎬 Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG → WEBM
+🖼️ Gambar: PNG, JPG, JPEG, WEBP → PNG
 👍 Sticker (WEBP static, WEBM video)
 
 *Cara Penggunaan:*
@@ -90,7 +91,7 @@ bot.onText(/\/help/, (msg) => {
 
 *Format yang Didukung:*
 • Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG (konversi ke WEBM)
-• Gambar: PNG, JPG, JPEG, WEBP (konversi ke WEBP)
+• Gambar: PNG, JPG, JPEG, WEBP (konversi ke PNG)
 • Sticker: WEBP (static), WEBM (video)
 • Ukuran maksimal: 50 MB
 • Akan dikonversi ke 512x512 px
@@ -127,7 +128,16 @@ bot.on('document', async (msg) => {
         return bot.sendMessage(chatId, '❌ File terlalu besar! Maksimal 50 MB');
     }
     
-    await processVideo(chatId, document.file_id, document.file_name || 'video');
+    // Cek apakah ini gambar static atau video
+    const isImage = isStaticImage(document.mime_type, document.file_name);
+    
+    if (isImage) {
+        // Gambar static -> konversi ke WEBP
+        await processImage(chatId, document.file_id, document.file_name || 'image');
+    } else {
+        // Video/GIF -> konversi ke WEBM
+        await processVideo(chatId, document.file_id, document.file_name || 'video');
+    }
 });
 
 // Handler untuk menerima animation (GIF/video yang dikirim sebagai animation)
@@ -247,7 +257,7 @@ async function processImage(chatId, fileId, fileName) {
         const timestamp = Date.now();
         const inputFileName = `${timestamp}_${fileName}`;
         inputPath = path.join(tempDir, inputFileName);
-        outputPath = path.join(tempDir, `${timestamp}_output.webm`);
+        outputPath = path.join(tempDir, `${timestamp}_output.png`);
         
         // Download file
         await bot.editMessageText('📥 Downloading image...', {
@@ -269,13 +279,13 @@ async function processImage(chatId, fileId, fileName) {
             writer.on('error', reject);
         });
         
-        // Convert to WEBP (static)
-        await bot.editMessageText('🔄 Converting image to WEBP format...', {
+        // Convert to PNG (static)
+        await bot.editMessageText('🔄 Converting image to PNG format...', {
             chat_id: chatId,
             message_id: processingMsg.message_id
         });
         
-        await imageToWebp(inputPath, outputPath);
+        await imageToPng(inputPath, outputPath);
         
         // Send hasil konversi
         await bot.editMessageText('📤 Mengirim file...', {
@@ -292,9 +302,9 @@ async function processImage(chatId, fileId, fileName) {
 
 📦 Ukuran: ${fileSizeInKB} KB
 📐 Resolusi: 512x512 px
-🖼️ Format: WEBP (static image)
+🖼️ Format: PNG (static image)
 
-📌 Gambar WEBP siap digunakan untuk sticker Telegram! 🎉`
+📌 Gambar PNG siap digunakan untuk sticker Telegram! 🎉`
         });
         
         // Delete processing message
@@ -395,12 +405,12 @@ async function processVideo(chatId, fileId, fileName) {
         
         if (isImage) {
             // Process sebagai gambar static
-            await bot.editMessageText('🔄 Converting image to WEBP format...', {
+            await bot.editMessageText('🔄 Converting image to PNG format...', {
                 chat_id: chatId,
                 message_id: processingMsg.message_id
             });
             
-            await imageToWebp(inputPath, outputPath);
+            await imageToPng(inputPath, outputPath);
         } else {
             // Validate video
             validateVideo(inputPath);
@@ -424,7 +434,7 @@ async function processVideo(chatId, fileId, fileName) {
         const fileSizeInKB = (stats.size / 1024).toFixed(2);
         
         // Rename file dengan nama yang diterima @Stickers bot
-        const finalFileName = isImage ? 'image_sticker.webp' : 'video_sticker.webm';
+        const finalFileName = isImage ? 'image_sticker.png' : 'video_sticker.webm';
         const finalOutputPath = path.join(tempDir, finalFileName);
         if (fs.existsSync(finalOutputPath)) {
             fs.unlinkSync(finalOutputPath);

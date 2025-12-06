@@ -1,7 +1,6 @@
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const ffprobePath = require('ffprobe-static').path;
-const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 
@@ -191,68 +190,6 @@ function finalCompressWebm(inputPath, outputPath, duration, resolve, reject) {
 }
 
 /**
- * Convert static image (PNG, JPG, JPEG) to WEBP format
- * Hanya mengubah format, bukan menjadikan video
- * Output: WEBP static image 512x512 px, max 256 KB
- */
-async function imageToWebp(inputPath, outputPath) {
-    return new Promise(async (resolve, reject) => {
-        try {
-            console.log('Converting static image to WEBP format...');
-            
-            // Process image dengan Sharp
-            const imageBuffer = await sharp(inputPath)
-                .resize(512, 512, {
-                    fit: 'contain',
-                    background: { r: 0, g: 0, b: 0, alpha: 0 } // Transparent background
-                })
-                .webp({
-                    quality: 90,
-                    lossless: false,
-                    effort: 6 // Compression effort (0-6, higher = smaller file)
-                })
-                .toBuffer();
-            
-            // Cek ukuran
-            let fileSizeInKB = imageBuffer.length / 1024;
-            console.log(`Initial size: ${fileSizeInKB.toFixed(2)} KB`);
-            
-            // Kalau lebih dari 256 KB, kompres lebih agresif
-            if (fileSizeInKB > 256) {
-                console.log('Image too large, compressing...');
-                const compressedBuffer = await sharp(inputPath)
-                    .resize(512, 512, {
-                        fit: 'contain',
-                        background: { r: 0, g: 0, b: 0, alpha: 0 }
-                    })
-                    .webp({
-                        quality: 75,
-                        lossless: false,
-                        effort: 6
-                    })
-                    .toBuffer();
-                
-                fileSizeInKB = compressedBuffer.length / 1024;
-                console.log(`Compressed size: ${fileSizeInKB.toFixed(2)} KB`);
-                
-                // Simpan hasil kompresi
-                fs.writeFileSync(outputPath, compressedBuffer);
-            } else {
-                // Simpan dengan kualitas normal
-                fs.writeFileSync(outputPath, imageBuffer);
-            }
-            
-            console.log(`Image converted successfully! Final size: ${fileSizeInKB.toFixed(2)} KB`);
-            resolve(outputPath);
-            
-        } catch (err) {
-            console.error('Error converting image to WEBP:', err);
-            reject(err);
-        }
-    });
-}
-
-/**
  * Validasi file video/animation
  */
 function validateVideo(filePath) {
@@ -307,39 +244,8 @@ function isSupportedFormat(mimeType, fileName) {
     return false;
 }
 
-/**
- * Cek apakah file adalah gambar static (bukan GIF)
- */
-function isStaticImage(mimeType, fileName) {
-    const staticImageMimes = [
-        'image/png',
-        'image/jpeg',
-        'image/jpg',
-        'image/webp'
-    ];
-    
-    const staticImageExtensions = ['.png', '.jpg', '.jpeg'];
-    
-    // Cek mime type
-    if (mimeType && staticImageMimes.some(mime => mimeType.includes(mime))) {
-        return true;
-    }
-    
-    // Cek extension
-    if (fileName) {
-        const ext = path.extname(fileName).toLowerCase();
-        if (staticImageExtensions.includes(ext)) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
 module.exports = {
     videoToWebm,
-    imageToWebp,
     validateVideo,
-    isSupportedFormat,
-    isStaticImage
+    isSupportedFormat
 };
