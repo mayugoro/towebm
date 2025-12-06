@@ -3,7 +3,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { videoToWebm, imageToWebm, validateVideo, isSupportedFormat, isStaticImage } = require('./handler/gif_to_webm');
+const { videoToWebm, imageToWebp, validateVideo, isSupportedFormat, isStaticImage } = require('./handler/gif_to_webm');
 
 // Bot token dari .env
 const token = process.env.BOT_TOKEN;
@@ -49,7 +49,7 @@ bot.onText(/\/start/, (msg) => {
     const welcomeMessage = `
 🎨 *Selamat Datang di Video to WEBM Bot!*
 
-Bot ini mengkonversi video/animasi/sticker ke WEBM untuk video sticker Telegram dengan spesifikasi:
+Bot ini mengkonversi video/animasi ke WEBM dan gambar ke WEBP untuk sticker Telegram dengan spesifikasi:
 ✅ Resolusi 512x512 px
 ✅ Durasi max 3 detik
 ✅ Format WEBM VP9
@@ -89,8 +89,8 @@ bot.onText(/\/help/, (msg) => {
 4. Forward ke @Stickers untuk membuat sticker pack
 
 *Format yang Didukung:*
-• Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG
-• Gambar: PNG, JPG, JPEG, WEBP (akan dikonversi ke WEBM static)
+• Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG (konversi ke WEBM)
+• Gambar: PNG, JPG, JPEG, WEBP (konversi ke WEBP)
 • Sticker: WEBP (static), WEBM (video)
 • Ukuran maksimal: 50 MB
 • Akan dikonversi ke 512x512 px
@@ -269,13 +269,13 @@ async function processImage(chatId, fileId, fileName) {
             writer.on('error', reject);
         });
         
-        // Convert to WEBM (static)
-        await bot.editMessageText('🔄 Converting image to WEBM format...', {
+        // Convert to WEBP (static)
+        await bot.editMessageText('🔄 Converting image to WEBP format...', {
             chat_id: chatId,
             message_id: processingMsg.message_id
         });
         
-        await imageToWebm(inputPath, outputPath);
+        await imageToWebp(inputPath, outputPath);
         
         // Send hasil konversi
         await bot.editMessageText('📤 Mengirim file...', {
@@ -292,9 +292,9 @@ async function processImage(chatId, fileId, fileName) {
 
 📦 Ukuran: ${fileSizeInKB} KB
 📐 Resolusi: 512x512 px
-🖼️ Format: WEBM (static image)
+🖼️ Format: WEBP (static image)
 
-📌 Gambar WEBM siap digunakan untuk sticker Telegram! 🎉`
+📌 Gambar WEBP siap digunakan untuk sticker Telegram! 🎉`
         });
         
         // Delete processing message
@@ -395,12 +395,12 @@ async function processVideo(chatId, fileId, fileName) {
         
         if (isImage) {
             // Process sebagai gambar static
-            await bot.editMessageText('🔄 Converting image to WEBM format...', {
+            await bot.editMessageText('🔄 Converting image to WEBP format...', {
                 chat_id: chatId,
                 message_id: processingMsg.message_id
             });
             
-            await imageToWebm(inputPath, outputPath);
+            await imageToWebp(inputPath, outputPath);
         } else {
             // Validate video
             validateVideo(inputPath);
@@ -424,7 +424,8 @@ async function processVideo(chatId, fileId, fileName) {
         const fileSizeInKB = (stats.size / 1024).toFixed(2);
         
         // Rename file dengan nama yang diterima @Stickers bot
-        const finalOutputPath = path.join(tempDir, 'video_sticker.webm');
+        const finalFileName = isImage ? 'image_sticker.webp' : 'video_sticker.webm';
+        const finalOutputPath = path.join(tempDir, finalFileName);
         if (fs.existsSync(finalOutputPath)) {
             fs.unlinkSync(finalOutputPath);
         }
@@ -434,7 +435,7 @@ async function processVideo(chatId, fileId, fileName) {
         if (isImage) {
             // Kirim sebagai document untuk gambar static
             await bot.sendDocument(chatId, finalOutputPath, {
-                caption: `✅ Konversi berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n🖼️ Format: WEBM (static image)\n\n📌 Gambar WEBM siap digunakan untuk sticker Telegram! 🎉`
+                caption: `✅ Konversi berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n🖼️ Format: WEBP (static image)\n\n📌 Gambar WEBP siap digunakan untuk sticker Telegram! 🎉`
             });
         } else {
             // Kirim sebagai video dengan parameter khusus untuk sticker

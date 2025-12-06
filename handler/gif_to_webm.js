@@ -191,14 +191,14 @@ function finalCompressWebm(inputPath, outputPath, duration, resolve, reject) {
 }
 
 /**
- * Convert static image (PNG, JPG, JPEG) to WEBM format
+ * Convert static image (PNG, JPG, JPEG) to WEBP format
  * Hanya mengubah format, bukan menjadikan video
- * Output: WEBM static image 512x512 px, max 256 KB
+ * Output: WEBP static image 512x512 px, max 256 KB
  */
-async function imageToWebm(inputPath, outputPath) {
+async function imageToWebp(inputPath, outputPath) {
     return new Promise(async (resolve, reject) => {
         try {
-            console.log('Converting static image to WEBM format...');
+            console.log('Converting static image to WEBP format...');
             
             // Process image dengan Sharp
             const imageBuffer = await sharp(inputPath)
@@ -246,7 +246,7 @@ async function imageToWebm(inputPath, outputPath) {
             resolve(outputPath);
             
         } catch (err) {
-            console.error('Error converting image to WEBM:', err);
+            console.error('Error converting image to WEBP:', err);
             reject(err);
         }
     });
@@ -338,7 +338,7 @@ function isStaticImage(mimeType, fileName) {
 
 module.exports = {
     videoToWebm,
-    imageToWebm,
+    imageToWebp,
     validateVideo,
     isSupportedFormat,
     isStaticImage
