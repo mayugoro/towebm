@@ -3,7 +3,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
-const { videoToWebm, validateVideo, isSupportedFormat } = require('./handler/gif_to_webm');
+const { videoToWebm, imageToWebm, validateVideo, isSupportedFormat, isStaticImage } = require('./handler/gif_to_webm');
 
 // Bot token dari .env
 const token = process.env.BOT_TOKEN;
@@ -56,7 +56,8 @@ Bot ini mengkonversi video/animasi/sticker ke WEBM untuk video sticker Telegram 
 ✅ Ukuran max 256 KB
 
 *Format yang Didukung:*
-🎬 GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+🎬 Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG
+🖼️ Gambar: PNG, JPG, JPEG, WEBP
 👍 Sticker (WEBP static, WEBM video)
 
 *Cara Penggunaan:*
@@ -88,7 +89,8 @@ bot.onText(/\/help/, (msg) => {
 4. Forward ke @Stickers untuk membuat sticker pack
 
 *Format yang Didukung:*
-• Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, WEBP
+• Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG
+• Gambar: PNG, JPG, JPEG, WEBP (akan dikonversi ke WEBM static)
 • Sticker: WEBP (static), WEBM (video)
 • Ukuran maksimal: 50 MB
 • Akan dikonversi ke 512x512 px
@@ -109,14 +111,14 @@ Ada masalah? Cek dokumentasi di GitHub!
 
 
 
-// Handler untuk menerima dokumen (semua format video)
+// Handler untuk menerima dokumen (semua format video dan gambar)
 bot.on('document', async (msg) => {
     const chatId = msg.chat.id;
     const document = msg.document;
     
     // Cek apakah file format yang didukung
     if (!isSupportedFormat(document.mime_type, document.file_name)) {
-        return bot.sendMessage(chatId, '❌ Format tidak didukung! Kirim file: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG, atau WEBP');
+        return bot.sendMessage(chatId, '❌ Format tidak didukung! Kirim file: Video (GIF, MP4, MOV, WEBM, AVI, MKV, MPEG) atau Gambar (PNG, JPG, JPEG, WEBP)');
     }
     
     // Cek ukuran file
@@ -134,6 +136,17 @@ bot.on('animation', async (msg) => {
     const animation = msg.animation;
     
     await processVideo(chatId, animation.file_id, animation.file_name || 'animation');
+});
+
+// Handler untuk menerima photo (gambar yang dikirim sebagai photo)
+bot.on('photo', async (msg) => {
+    const chatId = msg.chat.id;
+    const photo = msg.photo;
+    
+    // Ambil foto dengan resolusi tertinggi
+    const largestPhoto = photo[photo.length - 1];
+    
+    await processImage(chatId, largestPhoto.file_id, 'photo.jpg');
 });
 
 // Handler untuk menerima video
@@ -202,6 +215,127 @@ function checkRateLimit(userId) {
 }
 
 /**
+ * Process Image conversion (static image to WEBM)
+ */
+async function processImage(chatId, fileId, fileName) {
+    let processingMsg;
+    let inputPath;
+    let outputPath;
+    
+    try {
+        // Check if user is already processing
+        if (processingUsers.has(chatId)) {
+            return bot.sendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
+        }
+        
+        // Check rate limit
+        const rateLimit = checkRateLimit(chatId);
+        if (!rateLimit.allowed) {
+            return bot.sendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
+        }
+        
+        // Mark user as processing
+        processingUsers.add(chatId);
+        
+        // Send processing message
+        processingMsg = await bot.sendMessage(chatId, '⏳ Memproses gambar Anda...');
+        
+        // Download file dari Telegram
+        const fileLink = await bot.getFileLink(fileId);
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const inputFileName = `${timestamp}_${fileName}`;
+        inputPath = path.join(tempDir, inputFileName);
+        outputPath = path.join(tempDir, `${timestamp}_output.webm`);
+        
+        // Download file
+        await bot.editMessageText('📥 Downloading image...', {
+            chat_id: chatId,
+            message_id: processingMsg.message_id
+        });
+        
+        const response = await axios({
+            method: 'GET',
+            url: fileLink,
+            responseType: 'stream'
+        });
+        
+        const writer = fs.createWriteStream(inputPath);
+        response.data.pipe(writer);
+        
+        await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+        });
+        
+        // Convert to WEBM (static)
+        await bot.editMessageText('🔄 Converting image to WEBM format...', {
+            chat_id: chatId,
+            message_id: processingMsg.message_id
+        });
+        
+        await imageToWebm(inputPath, outputPath);
+        
+        // Send hasil konversi
+        await bot.editMessageText('📤 Mengirim file...', {
+            chat_id: chatId,
+            message_id: processingMsg.message_id
+        });
+        
+        const stats = fs.statSync(outputPath);
+        const fileSizeInKB = (stats.size / 1024).toFixed(2);
+        
+        // Kirim sebagai document
+        await bot.sendDocument(chatId, outputPath, {
+            caption: `✅ Konversi berhasil!
+
+📦 Ukuran: ${fileSizeInKB} KB
+📐 Resolusi: 512x512 px
+🖼️ Format: WEBM (static image)
+
+📌 Gambar WEBM siap digunakan untuk sticker Telegram! 🎉`
+        });
+        
+        // Delete processing message
+        await bot.deleteMessage(chatId, processingMsg.message_id);
+        
+    } catch (error) {
+        console.error('Error processing image:', error);
+        
+        const errorMsg = '❌ Terjadi kesalahan saat memproses gambar!\n\n' + error.message;
+        
+        if (processingMsg) {
+            try {
+                await bot.editMessageText(errorMsg, {
+                    chat_id: chatId,
+                    message_id: processingMsg.message_id
+                });
+            } catch (e) {
+                await bot.sendMessage(chatId, errorMsg);
+            }
+        } else {
+            await bot.sendMessage(chatId, errorMsg);
+        }
+    } finally {
+        // Remove user from processing set
+        processingUsers.delete(chatId);
+        
+        // Cleanup temp files
+        try {
+            if (inputPath && fs.existsSync(inputPath)) {
+                fs.unlinkSync(inputPath);
+            }
+            if (outputPath && fs.existsSync(outputPath)) {
+                fs.unlinkSync(outputPath);
+            }
+        } catch (err) {
+            console.error('Error cleaning up temp files:', err);
+        }
+    }
+}
+
+/**
  * Process Video/Animation conversion
  */
 async function processVideo(chatId, fileId, fileName) {
@@ -256,16 +390,29 @@ async function processVideo(chatId, fileId, fileName) {
             writer.on('error', reject);
         });
         
-        // Validate video
-        validateVideo(inputPath);
+        // Cek apakah file adalah gambar static atau video
+        const isImage = isStaticImage(null, fileName);
         
-        // Convert to WEBM
-        await bot.editMessageText('🔄 Converting to WEBM for Telegram sticker...', {
-            chat_id: chatId,
-            message_id: processingMsg.message_id
-        });
-        
-        await videoToWebm(inputPath, outputPath);
+        if (isImage) {
+            // Process sebagai gambar static
+            await bot.editMessageText('🔄 Converting image to WEBM format...', {
+                chat_id: chatId,
+                message_id: processingMsg.message_id
+            });
+            
+            await imageToWebm(inputPath, outputPath);
+        } else {
+            // Validate video
+            validateVideo(inputPath);
+            
+            // Convert to WEBM (video)
+            await bot.editMessageText('🔄 Converting to WEBM for Telegram sticker...', {
+                chat_id: chatId,
+                message_id: processingMsg.message_id
+            });
+            
+            await videoToWebm(inputPath, outputPath);
+        }
         
         // Send hasil konversi
         await bot.editMessageText('📤 Mengirim file...', {
@@ -283,11 +430,19 @@ async function processVideo(chatId, fileId, fileName) {
         }
         fs.renameSync(outputPath, finalOutputPath);
         
-        // Kirim sebagai video dengan parameter khusus untuk sticker
-        await bot.sendVideo(chatId, finalOutputPath, {
-            caption: `✅ Konversi berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n⏱ Durasi: Max 3 detik\n🎬 Format: WEBM VP9\n\n📌 Forward file ini ke @Stickers untuk membuat sticker pack!\n\nFile siap digunakan untuk sticker Telegram! 🎉`,
-            supports_streaming: true
-        });
+        // Kirim sesuai tipe file
+        if (isImage) {
+            // Kirim sebagai document untuk gambar static
+            await bot.sendDocument(chatId, finalOutputPath, {
+                caption: `✅ Konversi berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n🖼️ Format: WEBM (static image)\n\n📌 Gambar WEBM siap digunakan untuk sticker Telegram! 🎉`
+            });
+        } else {
+            // Kirim sebagai video dengan parameter khusus untuk sticker
+            await bot.sendVideo(chatId, finalOutputPath, {
+                caption: `✅ Konversi berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n⏱ Durasi: Max 3 detik\n🎬 Format: WEBM VP9\n\n📌 Forward file ini ke @Stickers untuk membuat sticker pack!\n\nFile siap digunakan untuk sticker Telegram! 🎉`,
+                supports_streaming: true
+            });
+        }
         
         // Update outputPath untuk cleanup
         outputPath = finalOutputPath;
