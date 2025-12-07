@@ -5,6 +5,7 @@ const path = require('path');
 const axios = require('axios');
 const { videoToWebm, validateVideo, isSupportedFormat } = require('./handler/gif_to_webm');
 const { imageToPng, isStaticImage } = require('./handler/to_webp');
+const { downloadAndConvertToWebm, isTenorUrl } = require('./handler/download_to_webm');
 
 // Bot token dari .env
 const token = process.env.BOT_TOKEN;
@@ -60,18 +61,24 @@ Bot ini mengkonversi video/animasi ke WEBM dan gambar ke WEBP untuk sticker Tele
 🎬 Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG → WEBM
 🖼️ Gambar: PNG, JPG, JPEG, WEBP → PNG
 👍 Sticker (WEBP static, WEBM video)
+🔗 URL Tenor (langsung download & convert!)
 
 *Cara Penggunaan:*
-1. Kirim video/GIF/sticker ke bot
-2. Tunggu proses konversi
-3. Download file WEBM hasil konversi
-4. Forward ke @Stickers untuk buat pack!
+1. Kirim video/GIF/sticker ke bot, atau
+2. Kirim link Tenor (tenor.com/view/...)
+3. Tunggu proses konversi
+4. Download file WEBM hasil konversi
+5. Forward ke @Stickers untuk buat pack!
+
+*Contoh URL Tenor:*
+\`tenor.com/view/cute-panda-gif-123456\`
+\`https://tenor.com/view/cute-panda-gif-123456\`
 
 *Commands:*
 /start - Tampilkan pesan ini
 /help - Bantuan penggunaan
 
-Kirim video/sticker sekarang untuk memulai! 🎬
+Kirim video/sticker atau link Tenor sekarang! 🎬
     `;
     
     bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
@@ -93,6 +100,7 @@ bot.onText(/\/help/, (msg) => {
 • Video: GIF, MP4, MOV, WEBM, AVI, MKV, MPEG (konversi ke WEBM)
 • Gambar: PNG, JPG, JPEG, WEBP (konversi ke PNG)
 • Sticker: WEBP (static), WEBM (video)
+• URL Tenor: Kirim link Tenor langsung! (tenor.com/view/...)
 • Ukuran maksimal: 50 MB
 • Akan dikonversi ke 512x512 px
 • Durasi dibatasi 3 detik
@@ -103,6 +111,7 @@ bot.onText(/\/help/, (msg) => {
 • Sticker static (WEBP) akan dikonversi ke format video sticker
 • File hasil bisa langsung digunakan untuk video sticker Telegram
 • Max 3 konversi per menit untuk mencegah spam
+• Untuk Tenor: Kirim link seperti tenor.com/view/name-gif-123456
 
 Ada masalah? Cek dokumentasi di GitHub!
     `;
@@ -199,6 +208,34 @@ bot.on('sticker', async (msg) => {
     }
     
     await processVideo(chatId, sticker.file_id, fileName);
+});
+
+// Handler untuk text message (URL Tenor)
+bot.on('text', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
+    
+    // Skip jika command
+    if (text.startsWith('/')) {
+        return;
+    }
+    
+    // Cek apakah text adalah URL Tenor
+    if (!isTenorUrl(text)) {
+        return bot.sendMessage(chatId, 
+            '❓ Tidak dikenali sebagai URL Tenor.\n\n' +
+            '💡 *Cara Menggunakan:*\n' +
+            '• Kirim video/GIF/sticker langsung, atau\n' +
+            '• Kirim link Tenor seperti:\n' +
+            '  `tenor.com/view/name-gif-123456`\n' +
+            '  `https://tenor.com/view/name-gif-123456`\n\n' +
+            'Gunakan /help untuk bantuan lengkap!',
+            { parse_mode: 'Markdown' }
+        );
+    }
+    
+    // Process URL Tenor
+    await processTenorUrl(chatId, text);
 });
 
 /**
@@ -488,6 +525,146 @@ async function processVideo(chatId, fileId, fileName) {
             if (inputPath && fs.existsSync(inputPath)) {
                 fs.unlinkSync(inputPath);
             }
+            if (outputPath && fs.existsSync(outputPath)) {
+                fs.unlinkSync(outputPath);
+            }
+        } catch (err) {
+            console.error('Error cleaning up temp files:', err);
+        }
+    }
+}
+
+/**
+ * Process Tenor URL
+ */
+async function processTenorUrl(chatId, tenorUrl) {
+    let processingMsg;
+    let outputPath;
+    
+    try {
+        // Check if user is already processing
+        if (processingUsers.has(chatId)) {
+            return bot.sendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
+        }
+        
+        // Check rate limit
+        const rateLimit = checkRateLimit(chatId);
+        if (!rateLimit.allowed) {
+            return bot.sendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
+        }
+        
+        // Mark user as processing
+        processingUsers.add(chatId);
+        
+        // Send processing message
+        processingMsg = await bot.sendMessage(chatId, '⏳ Memproses link Tenor Anda...');
+        
+        // Generate output path
+        const timestamp = Date.now();
+        outputPath = path.join(tempDir, `${timestamp}_tenor_output.webm`);
+        
+        // Update status: Extracting Tenor ID
+        await bot.editMessageText('🔍 Mengambil data dari Tenor...', {
+            chat_id: chatId,
+            message_id: processingMsg.message_id
+        });
+        
+        // Download dan konversi menggunakan modul download_to_webm
+        await bot.editMessageText('📥 Downloading GIF dari Tenor...', {
+            chat_id: chatId,
+            message_id: processingMsg.message_id
+        });
+        
+        // Update progress saat converting
+        const progressInterval = setInterval(async () => {
+            try {
+                await bot.editMessageText('🔄 Converting GIF to WEBM...', {
+                    chat_id: chatId,
+                    message_id: processingMsg.message_id
+                });
+            } catch (e) {
+                // Ignore error jika message sudah diedit
+            }
+        }, 3000);
+        
+        // Download and convert
+        await downloadAndConvertToWebm(tenorUrl, outputPath, tempDir);
+        
+        // Stop progress updates
+        clearInterval(progressInterval);
+        
+        // Send hasil konversi
+        await bot.editMessageText('📤 Mengirim file...', {
+            chat_id: chatId,
+            message_id: processingMsg.message_id
+        });
+        
+        const stats = fs.statSync(outputPath);
+        const fileSizeInKB = (stats.size / 1024).toFixed(2);
+        
+        // Rename file dengan nama yang diterima @Stickers bot
+        const finalFileName = 'tenor_sticker.webm';
+        const finalOutputPath = path.join(tempDir, `${timestamp}_${finalFileName}`);
+        if (fs.existsSync(finalOutputPath)) {
+            fs.unlinkSync(finalOutputPath);
+        }
+        fs.renameSync(outputPath, finalOutputPath);
+        
+        // Kirim sebagai video dengan parameter khusus untuk sticker
+        await bot.sendVideo(chatId, finalOutputPath, {
+            caption: `✅ Konversi dari Tenor berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n⏱ Durasi: Max 3 detik\n🎬 Format: WEBM VP9\n\n📌 Forward file ini ke @Stickers untuk membuat sticker pack!\n\nFile siap digunakan untuk sticker Telegram! 🎉`,
+            supports_streaming: true
+        });
+        
+        // Update outputPath untuk cleanup
+        outputPath = finalOutputPath;
+        
+        // Delete processing message
+        await bot.deleteMessage(chatId, processingMsg.message_id);
+        
+    } catch (error) {
+        console.error('Error processing Tenor URL:', error);
+        
+        let errorMsg = '❌ Terjadi kesalahan saat memproses URL Tenor!\n\n';
+        
+        // Custom error messages
+        if (error.message.includes('Format URL Tenor tidak valid')) {
+            errorMsg += '🔗 Format URL tidak valid!\n\n' +
+                       '💡 Contoh URL yang benar:\n' +
+                       '• tenor.com/view/name-gif-123456\n' +
+                       '• https://tenor.com/view/name-gif-123456\n' +
+                       '• https://tenor.com/id/view/name-gif-123456';
+        } else if (error.message.includes('GIF tidak ditemukan')) {
+            errorMsg += '❌ GIF tidak ditemukan di Tenor!\n\n' +
+                       'Pastikan link yang Anda kirim benar dan masih aktif.';
+        } else if (error.message.includes('Tenor API Error')) {
+            errorMsg += '⚠️ Gagal mengakses Tenor API!\n\n' +
+                       'Coba lagi beberapa saat atau gunakan link yang berbeda.';
+        } else if (error.message.includes('terlalu besar')) {
+            errorMsg += error.message;
+        } else {
+            errorMsg += error.message;
+        }
+        
+        if (processingMsg) {
+            try {
+                await bot.editMessageText(errorMsg, {
+                    chat_id: chatId,
+                    message_id: processingMsg.message_id
+                });
+            } catch (e) {
+                // Jika edit gagal, kirim pesan baru
+                await bot.sendMessage(chatId, errorMsg);
+            }
+        } else {
+            await bot.sendMessage(chatId, errorMsg);
+        }
+    } finally {
+        // Remove user from processing set
+        processingUsers.delete(chatId);
+        
+        // Cleanup temp files
+        try {
             if (outputPath && fs.existsSync(outputPath)) {
                 fs.unlinkSync(outputPath);
             }
