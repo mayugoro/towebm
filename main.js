@@ -82,13 +82,20 @@ if (!token) {
 let botConfig;
 
 if (useLocalConnection) {
-    // Mode: Local Bot API Server (webhook)
+    // Mode: Local Bot API Server (tetap pakai polling)
     console.log('🔧 Using Local Bot API Server mode');
     console.log(`📡 Server: ${localConnection}`);
     
     botConfig = {
         baseApiUrl: `http://${localConnection}`,
-        filepath: false  // Disable file download via URL (local server handles it)
+        filepath: false,  // Disable file download via URL (local server handles it)
+        polling: {
+            interval: 1000,
+            autoStart: true,
+            params: {
+                timeout: 10
+            }
+        }
     };
 } else {
     // Mode: Public Telegram API (polling)
@@ -122,14 +129,11 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
 }
 
-console.log('Bot started successfully! 🚀');
+// Startup message
 if (useLocalConnection) {
-    console.log('⚡ Local Bot API Server ready (webhook mode)');
-    console.log(`📡 Connected to: ${localConnection}`);
-    console.log('💡 Benefits: Faster responses, larger file support (up to 2GB)');
+    console.log('🚀 Bot started (Local API Server: ' + localConnection + ')');
 } else {
-    console.log('📡 Polling for messages from public API...');
-    console.log('💡 For better performance, consider using local Bot API server');
+    console.log('🚀 Bot started (Public API)');
 }
 
 // Global error handler untuk unhandled promise rejections
