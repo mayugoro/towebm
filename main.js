@@ -7,8 +7,69 @@ const { videoToWebm, validateVideo, isSupportedFormat } = require('./handler/gif
 const { imageToPng, isStaticImage } = require('./handler/to_webp');
 const { downloadAndConvertToWebm, isTenorUrl } = require('./handler/download_to_webm');
 
-// Bot token dari .env
+// Helper function untuk retry dengan exponential backoff
+async function retryTelegramRequest(fn, maxRetries = 3, initialDelay = 1000) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (error) {
+            // Check jika error adalah 429 Too Many Requests
+            if (error.response && error.response.statusCode === 429) {
+                const retryAfter = error.response.body?.parameters?.retry_after || (initialDelay / 1000) * Math.pow(2, i);
+                console.warn(`⚠️ Rate limit hit. Retrying after ${retryAfter} seconds... (Attempt ${i + 1}/${maxRetries})`);
+                
+                // Jika ini retry terakhir, throw error
+                if (i === maxRetries - 1) {
+                    throw error;
+                }
+                
+                // Wait sebelum retry
+                await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+            } else {
+                // Jika bukan 429, throw langsung
+                throw error;
+            }
+        }
+    }
+}
+
+// Tracker untuk last request time
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 100 + Math.random() * 100; // 100-200ms random delay
+
+// Helper function untuk enforce rate limiting
+async function enforceRateLimit() {
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastRequestTime;
+    
+    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+        const delay = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    lastRequestTime = Date.now();
+}
+
+// Wrapper functions untuk bot methods dengan retry logic dan rate limiting
+const botSendMessage = async (chatId, text, options = {}) => {
+    await enforceRateLimit();
+    return retryTelegramRequest(() => bot.sendMessage(chatId, text, options));
+};
+
+const botSendDocument = async (chatId, document, options = {}) => {
+    await enforceRateLimit();
+    return retryTelegramRequest(() => bot.sendDocument(chatId, document, options));
+};
+
+const botSendSticker = async (chatId, sticker, options = {}) => {
+    await enforceRateLimit();
+    return retryTelegramRequest(() => bot.sendSticker(chatId, sticker, options));
+};
+
+// Bot token dan konfigurasi dari .env
 const token = process.env.BOT_TOKEN;
+const useLocalConnection = process.env.USE_LOCAL_CONNECTION === 'true';
+const localConnection = process.env.LOCAL_CONNECTION || '127.0.0.1:8081';
 
 // Validasi token
 if (!token) {
@@ -17,16 +78,35 @@ if (!token) {
     process.exit(1);
 }
 
-// Create bot instance dengan polling configuration
-const bot = new TelegramBot(token, { 
-    polling: {
-        interval: 1000,  // Polling interval 1 detik
-        autoStart: true,
-        params: {
-            timeout: 10
+// Konfigurasi bot berdasarkan mode
+let botConfig;
+
+if (useLocalConnection) {
+    // Mode: Local Bot API Server (webhook)
+    console.log('🔧 Using Local Bot API Server mode');
+    console.log(`📡 Server: ${localConnection}`);
+    
+    botConfig = {
+        baseApiUrl: `http://${localConnection}`,
+        filepath: false  // Disable file download via URL (local server handles it)
+    };
+} else {
+    // Mode: Public Telegram API (polling)
+    console.log('🌐 Using Public Telegram API mode (polling)');
+    
+    botConfig = {
+        polling: {
+            interval: 1000,  // Polling interval 1 detik
+            autoStart: true,
+            params: {
+                timeout: 10
+            }
         }
-    }
-});
+    };
+}
+
+// Create bot instance dengan konfigurasi yang sesuai
+const bot = new TelegramBot(token, botConfig);
 
 // Rate limiting - track user requests
 const userRequests = new Map();
@@ -43,11 +123,42 @@ if (!fs.existsSync(tempDir)) {
 }
 
 console.log('Bot started successfully! 🚀');
-console.log('Polling for messages...');
+if (useLocalConnection) {
+    console.log('⚡ Local Bot API Server ready (webhook mode)');
+    console.log(`📡 Connected to: ${localConnection}`);
+    console.log('💡 Benefits: Faster responses, larger file support (up to 2GB)');
+} else {
+    console.log('📡 Polling for messages from public API...');
+    console.log('💡 For better performance, consider using local Bot API server');
+}
+
+// Global error handler untuk unhandled promise rejections
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Unhandled Promise Rejection:', error);
+    
+    // Log detail error jika ada
+    if (error.response) {
+        console.error('Response:', error.response.statusCode, error.response.body);
+    }
+    
+    // Jangan crash bot, lanjutkan berjalan
+});
+
+// Error handler untuk polling errors
+bot.on('polling_error', (error) => {
+    console.error('❌ Polling Error:', error.code, error.message);
+    
+    // Handle specific error codes
+    if (error.code === 'ETELEGRAM' && error.response?.statusCode === 429) {
+        const retryAfter = error.response.body?.parameters?.retry_after || 60;
+        console.warn(`⚠️ Rate limit on polling. Will retry after ${retryAfter} seconds`);
+    }
+});
 
 // Command /start
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
+    try {
     const welcomeMessage = `
 🎨 *Selamat Datang di Video to WEBM Bot!*
 
@@ -81,12 +192,16 @@ Bot ini mengkonversi video/animasi ke WEBM dan gambar ke WEBP untuk sticker Tele
 Kirim video/sticker atau link Tenor sekarang! 🎬
     `;
     
-    bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
+        await botSendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error('Error in /start command:', error);
+    }
 });
 
 // Command /help
-bot.onText(/\/help/, (msg) => {
+bot.onText(/\/help/, async (msg) => {
     const chatId = msg.chat.id;
+    try {
     const helpMessage = `
 📖 *Bantuan - Video to WEBM Bot*
 
@@ -116,7 +231,10 @@ bot.onText(/\/help/, (msg) => {
 Ada masalah? Cek dokumentasi di GitHub!
     `;
     
-    bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+        await botSendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error('Error in /help command:', error);
+    }
 });
 
 
@@ -128,13 +246,13 @@ bot.on('document', async (msg) => {
     
     // Cek apakah file format yang didukung
     if (!isSupportedFormat(document.mime_type, document.file_name)) {
-        return bot.sendMessage(chatId, '❌ Format tidak didukung! Kirim file: Video (GIF, MP4, MOV, WEBM, AVI, MKV, MPEG) atau Gambar (PNG, JPG, JPEG, WEBP)');
+        return await botSendMessage(chatId, '❌ Format tidak didukung! Kirim file: Video (GIF, MP4, MOV, WEBM, AVI, MKV, MPEG) atau Gambar (PNG, JPG, JPEG, WEBP)');
     }
     
     // Cek ukuran file
     const fileSizeInMB = document.file_size / (1024 * 1024);
     if (fileSizeInMB > 50) {
-        return bot.sendMessage(chatId, '❌ File terlalu besar! Maksimal 50 MB');
+        return await botSendMessage(chatId, '❌ File terlalu besar! Maksimal 50 MB');
     }
     
     // Cek apakah ini gambar static atau video
@@ -176,7 +294,7 @@ bot.on('video', async (msg) => {
     // Cek ukuran file
     const fileSizeInMB = video.file_size / (1024 * 1024);
     if (fileSizeInMB > 50) {
-        return bot.sendMessage(chatId, '❌ File terlalu besar! Maksimal 50 MB');
+        return await botSendMessage(chatId, '❌ File terlalu besar! Maksimal 50 MB');
     }
     
     await processVideo(chatId, video.file_id, video.file_name || 'video.mp4');
@@ -193,7 +311,7 @@ bot.on('sticker', async (msg) => {
     
     if (sticker.is_animated) {
         // TGS (Lottie) animated stickers
-        return bot.sendMessage(chatId, 
+        return await botSendMessage(chatId, 
             '❌ Sticker TGS (Lottie animated) tidak bisa langsung dikonversi.\n\n' +
             '💡 Solusi:\n' +
             '1. Convert TGS ke video dulu menggunakan:\n' +
@@ -222,7 +340,7 @@ bot.on('text', async (msg) => {
     
     // Cek apakah text adalah URL Tenor
     if (!isTenorUrl(text)) {
-        return bot.sendMessage(chatId, 
+        return await botSendMessage(chatId, 
             '❓ Tidak dikenali sebagai URL Tenor.\n\n' +
             '💡 *Cara Menggunakan:*\n' +
             '• Kirim video/GIF/sticker langsung, atau\n' +
@@ -272,20 +390,20 @@ async function processImage(chatId, fileId, fileName) {
     try {
         // Check if user is already processing
         if (processingUsers.has(chatId)) {
-            return bot.sendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
+            return await botSendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
         }
         
         // Check rate limit
         const rateLimit = checkRateLimit(chatId);
         if (!rateLimit.allowed) {
-            return bot.sendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
+            return await botSendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
         }
         
         // Mark user as processing
         processingUsers.add(chatId);
         
         // Send processing message
-        processingMsg = await bot.sendMessage(chatId, '⏳ Memproses gambar Anda...');
+        processingMsg = await botSendMessage(chatId, '⏳ Memproses gambar Anda...');
         
         // Download file dari Telegram
         const fileLink = await bot.getFileLink(fileId);
@@ -334,7 +452,7 @@ async function processImage(chatId, fileId, fileName) {
         const fileSizeInKB = (stats.size / 1024).toFixed(2);
         
         // Kirim sebagai document
-        await bot.sendDocument(chatId, outputPath, {
+        await botSendDocument(chatId, outputPath, {
             caption: `✅ Konversi berhasil!
 
 📦 Ukuran: ${fileSizeInKB} KB
@@ -359,10 +477,10 @@ async function processImage(chatId, fileId, fileName) {
                     message_id: processingMsg.message_id
                 });
             } catch (e) {
-                await bot.sendMessage(chatId, errorMsg);
+                await botSendMessage(chatId, errorMsg);
             }
         } else {
-            await bot.sendMessage(chatId, errorMsg);
+            await botSendMessage(chatId, errorMsg);
         }
     } finally {
         // Remove user from processing set
@@ -393,20 +511,20 @@ async function processVideo(chatId, fileId, fileName) {
     try {
         // Check if user is already processing
         if (processingUsers.has(chatId)) {
-            return bot.sendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
+            return await botSendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
         }
         
         // Check rate limit
         const rateLimit = checkRateLimit(chatId);
         if (!rateLimit.allowed) {
-            return bot.sendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
+            return await botSendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
         }
         
         // Mark user as processing
         processingUsers.add(chatId);
         
         // Send processing message
-        processingMsg = await bot.sendMessage(chatId, '⏳ Memproses video Anda...');
+        processingMsg = await botSendMessage(chatId, '⏳ Memproses video Anda...');
         
         // Download file dari Telegram
         const fileLink = await bot.getFileLink(fileId);
@@ -481,7 +599,7 @@ async function processVideo(chatId, fileId, fileName) {
         // Kirim sesuai tipe file
         if (isImage) {
             // Kirim sebagai document untuk gambar static
-            await bot.sendDocument(chatId, finalOutputPath, {
+            await botSendDocument(chatId, finalOutputPath, {
                 caption: `✅ Konversi berhasil!\n\n📦 Ukuran: ${fileSizeInKB} KB\n📐 Resolusi: 512x512 px\n🖼️ Format: WEBP (static image)\n\n📌 Gambar WEBP siap digunakan untuk sticker Telegram! 🎉`
             });
         } else {
@@ -511,10 +629,10 @@ async function processVideo(chatId, fileId, fileName) {
                 });
             } catch (e) {
                 // Jika edit gagal, kirim pesan baru
-                await bot.sendMessage(chatId, errorMsg);
+                await botSendMessage(chatId, errorMsg);
             }
         } else {
-            await bot.sendMessage(chatId, errorMsg);
+            await botSendMessage(chatId, errorMsg);
         }
     } finally {
         // Remove user from processing set
@@ -544,20 +662,20 @@ async function processTenorUrl(chatId, tenorUrl) {
     try {
         // Check if user is already processing
         if (processingUsers.has(chatId)) {
-            return bot.sendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
+            return await botSendMessage(chatId, '⚠️ Anda masih memiliki proses konversi yang berjalan. Tunggu hingga selesai!');
         }
         
         // Check rate limit
         const rateLimit = checkRateLimit(chatId);
         if (!rateLimit.allowed) {
-            return bot.sendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
+            return await botSendMessage(chatId, `⏱️ Terlalu banyak request! Silakan tunggu ${rateLimit.waitTime} detik lagi.`);
         }
         
         // Mark user as processing
         processingUsers.add(chatId);
         
         // Send processing message
-        processingMsg = await bot.sendMessage(chatId, '⏳ Memproses link Tenor Anda...');
+        processingMsg = await botSendMessage(chatId, '⏳ Memproses link Tenor Anda...');
         
         // Generate output path
         const timestamp = Date.now();
@@ -654,10 +772,10 @@ async function processTenorUrl(chatId, tenorUrl) {
                 });
             } catch (e) {
                 // Jika edit gagal, kirim pesan baru
-                await bot.sendMessage(chatId, errorMsg);
+                await botSendMessage(chatId, errorMsg);
             }
         } else {
-            await bot.sendMessage(chatId, errorMsg);
+            await botSendMessage(chatId, errorMsg);
         }
     } finally {
         // Remove user from processing set
@@ -695,8 +813,13 @@ process.on('unhandledRejection', (error) => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('\nShutting down bot...');
-    console.log('Stopping polling...');
-    bot.stopPolling();
+    
+    if (!useLocalConnection) {
+        console.log('Stopping polling...');
+        bot.stopPolling();
+    } else {
+        console.log('Closing local connection...');
+    }
     
     // Clear all temp files
     try {
@@ -714,6 +837,10 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
     console.log('\nShutting down bot...');
-    bot.stopPolling();
+    
+    if (!useLocalConnection) {
+        bot.stopPolling();
+    }
+    
     process.exit(0);
 });
